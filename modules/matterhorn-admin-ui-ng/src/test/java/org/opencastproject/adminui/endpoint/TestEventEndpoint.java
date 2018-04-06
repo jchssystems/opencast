@@ -799,6 +799,13 @@ public class TestEventEndpoint extends AbstractEventEndpoint {
   public JobEndpoint getJobService() {
     return env.getJobService();
   }
+  
+  // JK#2988
+  @Override
+  public SeriesEndpoint getSeriesService() {
+    return env.getSeriesService();
+  }
+  // END JK#2988
 
   @Override
   public AclService getAclService() {

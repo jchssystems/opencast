@@ -724,6 +724,7 @@ public class AbstractEventEndpointTest {
     private WorkflowService workflowService;
     private AssetManager assetManager;
     private JobEndpoint jobService;
+    private SeriesEndpoint seriesService; // JK#2988
     private AclService aclService;
     private EventCommentService eventCommentService;
     private SecurityService securityService;
@@ -746,6 +747,17 @@ public class AbstractEventEndpointTest {
       return jobService;
     }
 
+    // JK#2988
+    /** OSGi DI. */
+    public void setSeriesService(SeriesEndpoint seriesService) {
+      this.seriesService = seriesService;
+    }
+
+    public SeriesEndpoint getSeriesService() {
+      return seriesService;
+    }
+    // END JK#2988
+    
     public void setWorkflowService(WorkflowService workflowService) {
       this.workflowService = workflowService;
     }

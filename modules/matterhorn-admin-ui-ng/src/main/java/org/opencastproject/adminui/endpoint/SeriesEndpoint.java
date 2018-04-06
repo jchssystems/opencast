@@ -121,6 +121,7 @@ import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -734,6 +735,160 @@ public class SeriesEndpoint {
       logger.warn("Could not perform search query: {}", ExceptionUtils.getStackTrace(e));
       throw new WebApplicationException(Status.INTERNAL_SERVER_ERROR);
     }
+  }
+
+
+  public List<JValue> getSeriesWriteAccess(@QueryParam("filter") String filter, @QueryParam("sort") String sort,
+          @QueryParam("offset") int offset, @QueryParam("limit") int limit, @QueryParam("optedOut") Boolean optedOut)
+          throws UnauthorizedException {
+    try {
+      logger.debug("Requested series list");
+      SeriesSearchQuery query = new SeriesSearchQuery(securityService.getOrganization().getId(),
+              securityService.getUser());
+
+      Option<String> optSort = Option.option(trimToNull(sort));
+
+      if (offset != 0) {
+        query.withOffset(offset);
+      }
+
+      // If limit is 0, we set the default limit
+      query.withLimit(limit == 0 ? DEFAULT_LIMIT : limit);
+
+      if (optedOut != null)
+        query.withOptedOut(optedOut);
+
+      Map<String, String> filters = RestUtils.parseFilter(filter);
+      for (String name : filters.keySet()) {
+        if (SeriesListQuery.FILTER_ACL_NAME.equals(name)) {
+          query.withManagedAcl(filters.get(name));
+        } else if (SeriesListQuery.FILTER_CONTRIBUTORS_NAME.equals(name)) {
+          query.withContributor(filters.get(name));
+        } else if (SeriesListQuery.FILTER_CREATIONDATE_NAME.equals(name)) {
+          try {
+            Tuple<Date, Date> fromAndToCreationRange = RestUtils.getFromAndToDateRange(filters.get(name));
+            query.withCreatedFrom(fromAndToCreationRange.getA());
+            query.withCreatedTo(fromAndToCreationRange.getB());
+          } catch (IllegalArgumentException e) {
+            //return RestUtil.R.badRequest(e.getMessage());
+          }
+        } else if (SeriesListQuery.FILTER_CREATOR_NAME.equals(name)) {
+          query.withCreator(filters.get(name));
+        } else if (SeriesListQuery.FILTER_TEXT_NAME.equals(name)) {
+          query.withText(QueryPreprocessor.sanitize(filters.get(name)));
+        } else if (SeriesListQuery.FILTER_LANGUAGE_NAME.equals(name)) {
+          query.withLanguage(filters.get(name));
+        } else if (SeriesListQuery.FILTER_LICENSE_NAME.equals(name)) {
+          query.withLicense(filters.get(name));
+        } else if (SeriesListQuery.FILTER_ORGANIZERS_NAME.equals(name)) {
+          query.withOrganizer(filters.get(name));
+        } else if (SeriesListQuery.FILTER_SUBJECT_NAME.equals(name)) {
+          query.withSubject(filters.get(name));
+        } else if (SeriesListQuery.FILTER_TITLE_NAME.equals(name)) {
+          query.withTitle(filters.get(name));
+        }
+      }
+
+      if (optSort.isSome()) {
+        Set<SortCriterion> sortCriteria = RestUtils.parseSortQueryParameter(optSort.get());
+        for (SortCriterion criterion : sortCriteria) {
+
+          switch (criterion.getFieldName()) {
+            case SeriesIndexSchema.TITLE:
+              query.sortByTitle(criterion.getOrder());
+              break;
+            case SeriesIndexSchema.CONTRIBUTORS:
+              query.sortByContributors(criterion.getOrder());
+              break;
+            case SeriesIndexSchema.CREATOR:
+              query.sortByOrganizers(criterion.getOrder());
+              break;
+            case SeriesIndexSchema.CREATED_DATE_TIME:
+              query.sortByCreatedDateTime(criterion.getOrder());
+              break;
+            case SeriesIndexSchema.MANAGED_ACL:
+              query.sortByManagedAcl(criterion.getOrder());
+              break;
+            default:
+              logger.info("Unknown filter criteria {}", criterion.getFieldName());
+              //return Response.status(SC_BAD_REQUEST).build();
+          }
+        }
+      }
+
+      //We search for write actions
+      query.withoutActions();
+      query.withAction(Permissions.Action.WRITE);
+
+      //logger.trace("Using Query: " + query.toString());
+
+      SearchResult<Series> result = searchIndex.getByQuery(query);
+      if (logger.isDebugEnabled()) {
+        logger.debug("Found {} results in {} ms", result.getDocumentCount(), result.getSearchTime());
+      }
+
+      List<JValue> series = new ArrayList<>();
+      for (SearchResultItem<Series> item : result.getItems()) {
+        List<Field> fields = new ArrayList<>();
+        Series s = item.getSource();
+        String sId = s.getIdentifier();
+        fields.add(f("id", v(sId)));
+        fields.add(f("optedOut", v(s.isOptedOut())));
+        fields.add(f("title", v(s.getTitle(), Jsons.BLANK)));
+
+        fields.add(f("organizers", arr($(s.getOrganizers()).map(Functions.stringToJValue))));
+        fields.add(f("contributors", arr($(s.getContributors()).map(Functions.stringToJValue))));
+        if (s.getCreator() != null) {
+          fields.add(f("createdBy", v(s.getCreator())));
+        }
+        if (s.getCreatedDateTime() != null) {
+          fields.add(f("creation_date", v(toUTC(s.getCreatedDateTime().getTime()), Jsons.BLANK)));
+        }
+        if (s.getLanguage() != null) {
+          fields.add(f("language", v(s.getLanguage())));
+        }
+        if (s.getLicense() != null) {
+          fields.add(f("license", v(s.getLicense())));
+        }
+        if (s.getRightsHolder() != null) {
+          fields.add(f("rightsHolder", v(s.getRightsHolder())));
+        }
+        if (StringUtils.isNotBlank(s.getManagedAcl())) {
+          fields.add(f("managedAcl", v(s.getManagedAcl())));
+        }
+
+        series.add(obj(fields));
+      }
+      logger.debug("Request done");
+
+      // return okJsonList(series, offset, limit, result.getHitCount());
+      return series;
+    } catch (Exception e) {
+      logger.warn("Could not perform search query: {}", ExceptionUtils.getStackTrace(e));
+      throw new WebApplicationException(Status.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  public HashMap<String, String> getSeriesWriteAccess2() {
+      try {
+          SeriesSearchQuery query = new SeriesSearchQuery(
+                  securityService.getOrganization().getId(), securityService.getUser());
+          query.withLimit(DEFAULT_LIMIT);
+          query.withoutActions();
+          query.withAction(Permissions.Action.WRITE);
+
+          SearchResult<Series> result = searchIndex.getByQuery(query);
+          HashMap<String, String> m = new HashMap<String, String>();
+          for (SearchResultItem<Series> item : result.getItems()) {
+            Series s = item.getSource();
+            m.put(s.getTitle(), s.getIdentifier());
+          }
+
+          return m;
+      } catch (SearchIndexException e) {
+          logger.warn("Could not perform search query: {}", ExceptionUtils.getStackTrace(e));
+          throw new WebApplicationException(Status.INTERNAL_SERVER_ERROR);
+      }
   }
 
   @SuppressWarnings("unchecked")
